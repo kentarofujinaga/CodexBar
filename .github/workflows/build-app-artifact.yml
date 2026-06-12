@@ -1,0 +1,45 @@
+name: Build App Artifact
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-app:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode 26 if present
+        run: |
+          set -euo pipefail
+          for candidate in /Applications/Xcode_26.1.1.app /Applications/Xcode_26.1.app /Applications/Xcode.app; do
+            if [[ -d "$candidate" ]]; then
+              sudo xcode-select -s "${candidate}/Contents/Developer"
+              echo "DEVELOPER_DIR=${candidate}/Contents/Developer" >> "$GITHUB_ENV"
+              break
+            fi
+          done
+          /usr/bin/xcodebuild -version
+          swift --version
+
+      - name: Package CodexBar.app
+        env:
+          ARCHES: arm64
+          CODEXBAR_SIGNING: adhoc
+        run: |
+          set -euo pipefail
+          Scripts/package_app.sh release
+          test -d CodexBar.app
+          codesign --verify --deep --strict CodexBar.app
+          ditto -c -k --keepParent CodexBar.app CodexBar-app-arm64.zip
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: CodexBar-app-arm64
+          path: CodexBar-app-arm64.zip
+          retention-days: 7

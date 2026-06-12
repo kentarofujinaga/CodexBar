@@ -521,11 +521,42 @@ extension StatusItemController {
         let interactionMenu = captureMenu ?? menu
         let overviewProviders = self.settings.reconcileMergedOverviewSelectedProviders(
             activeProviders: enabledProviders)
-        let rows: [(provider: UsageProvider, model: UsageMenuCardView.Model)] = overviewProviders
-            .compactMap { provider in
-                guard let model = self.menuCardModel(for: provider) else { return nil }
-                guard !model.isOverviewErrorOnly else { return nil }
-                return (provider: provider, model: model)
+        let rows: [
+            (identifier: String, provider: UsageProvider, model: UsageMenuCardView.Model, storageText: String?)
+        ] = overviewProviders
+            .flatMap { provider -> [
+                (identifier: String, provider: UsageProvider, model: UsageMenuCardView.Model, storageText: String?)
+            ] in
+                if let tokenAccountDisplay = self.tokenAccountMenuDisplay(for: provider),
+                   tokenAccountDisplay.showAll,
+                   !tokenAccountDisplay.snapshots.isEmpty
+                {
+                    return tokenAccountDisplay.snapshots.compactMap { accountSnapshot in
+                        guard let model = self.menuCardModel(
+                            for: provider,
+                            snapshotOverride: accountSnapshot.snapshot,
+                            errorOverride: accountSnapshot.error,
+                            forceOverrideCard: accountSnapshot.snapshot == nil,
+                            accountOverride: AccountInfo(email: accountSnapshot.account.label, plan: nil))
+                        else {
+                            return nil
+                        }
+                        guard !model.isOverviewErrorOnly else { return nil }
+                        return (
+                            identifier: "\(Self.overviewRowIdentifierPrefix)\(provider.rawValue)-\(accountSnapshot.id.uuidString)",
+                            provider: provider,
+                            model: model,
+                            storageText: nil)
+                    }
+                }
+                guard let model = self.menuCardModel(for: provider) else { return [] }
+                guard !model.isOverviewErrorOnly else { return [] }
+                let storageText = self.store.storageFootprintText(for: provider)
+                return [(
+                    identifier: "\(Self.overviewRowIdentifierPrefix)\(provider.rawValue)",
+                    provider: provider,
+                    model: model,
+                    storageText: storageText)]
             }
         guard !rows.isEmpty else { return false }
 
@@ -533,20 +564,18 @@ extension StatusItemController {
         defer { self.logChartRenderDurationIfSlow("addOverviewRows(\(rows.count))", startedAt: t0) }
 
         for (index, row) in rows.enumerated() {
-            let identifier = "\(Self.overviewRowIdentifierPrefix)\(row.provider.rawValue)"
-            let storageText = self.store.storageFootprintText(for: row.provider)
             let submenu = self.makeOverviewRowSubmenu(
                 provider: row.provider,
                 model: row.model,
                 width: menuWidth)
             let item = self.makeMenuCardItem(
-                OverviewMenuCardRowView(model: row.model, storageText: storageText, width: menuWidth),
-                id: identifier,
+                OverviewMenuCardRowView(model: row.model, storageText: row.storageText, width: menuWidth),
+                id: row.identifier,
                 width: menuWidth,
-                heightCacheScope: row.provider.rawValue,
+                heightCacheScope: row.identifier,
                 heightCacheFingerprint: row.model.heightFingerprint(
                     section: "overview",
-                    additional: [UsageMenuCardView.Model.heightFingerprintField("storage", storageText)]),
+                    additional: [UsageMenuCardView.Model.heightFingerprintField("storage", row.storageText)]),
                 submenu: submenu,
                 onClick: { [weak self, weak interactionMenu] in
                     guard let self, let interactionMenu else { return }
